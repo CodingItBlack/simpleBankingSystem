@@ -1,0 +1,268 @@
+import sqlite3 as lite
+from random import randint
+
+global cur, id_counter, conn, current_account
+card_numbers = {}
+card_nums = list()
+
+
+def sql_connect():
+    global cur, id_counter, conn
+    id_counter = 0
+    conn = lite.connect('card.s3db')
+    cur = conn.cursor()
+    cur.execute('''CREATE TABLE IF NOT EXISTS card (
+                    id INTEGER,
+                    number TEXT,
+                    pin TEXT,
+                    balance INTEGER DEFAULT 0)''')
+
+    conn.commit()
+    cur.execute('SELECT id FROM card')
+
+    idc = cur.fetchall()
+    for _i in idc:
+        id_counter += 1
+
+
+def main_menu():
+    print('1. Create an account\n2. Log into account\n0. Exit\n')
+    action = int(input())
+    print()
+    if action == 1:
+        create_card()
+    elif action == 2:
+        log_in()
+    elif action == 0:
+        print('Bye!')
+        exit()
+    else:
+        print('please input a valid option!\n\n')
+        main_menu()
+
+
+def create_card():
+    global card_numbers, id_counter
+    first_half = '400000'
+    second_half = str(random_digits_gen(9))
+    fifteen_num = first_half + second_half
+    pin_num = str(random_digits_gen(4))
+    full_card_num = check_luhn(fifteen_num)
+    if len(full_card_num) == 16:
+        store_nums(full_card_num, pin_num)
+    else:
+        print('error, wrong amount of digits in card\n')
+
+    cur.execute(f'INSERT INTO card (id, number,pin, balance) VALUES ({id_counter + 1}, {str(full_card_num)}, {str(pin_num)}, 0)')
+    conn.commit()
+    id_counter += 1
+
+    print('Your card has been created\n'
+          'Your card number:\n'
+          f'{full_card_num}\n'
+          'Your card PIN:\n'
+          f'{pin_num}\n')
+    main_menu()
+
+
+def log_in():
+
+    while True:
+        try:
+            card_num = int(input('Enter your card number:\n'))
+            card_pin = int(input('Enter your pin:\n'))
+            break
+        except TypeError:
+            print('input not a number. retry')
+
+    if check_acc(card_num, card_pin):
+        print('\nYou have successfully logged in!\n')
+        log_in_menu()
+    else:
+        print('Wrong card number or PIN!\n')
+        main_menu()
+
+
+def check_acc(number, pin=0):
+    global current_account
+    i = 0
+    cur.execute('SELECT id, number, pin, balance FROM card')
+    rows = cur.fetchall()
+
+    if pin == 0:
+        for row in rows:
+            i += 1
+            if int(row[1]) == number:
+                return True
+            elif id_counter == i:
+                return False
+    elif pin > 0:
+        for row in rows:
+            i += 1
+            if int(row[1]) == number and int(row[2]) == pin:
+                current_account = row[1]
+                return True
+            elif id_counter == i:
+                return False
+
+
+def add_income(acc):
+    income_amt = int(input('Enter income:'))
+    cur.execute(f'SELECT balance FROM card WHERE number = {acc}')
+    old_bal = cur.fetchone()
+    new_bal = old_bal[0] + income_amt
+    cur.execute(f'UPDATE card SET balance = "{new_bal}" WHERE number = "{acc}"')
+    conn.commit()
+
+
+def check_amt(acc):
+    cur.execute(f'SELECT balance FROM card WHERE number = "{str(acc)}"')
+    amt = cur.fetchone()
+    print(amt[0])
+    return amt[0]
+
+
+def do_transfer(acc):
+    print('Transfer\nEnter card number:')
+    transfer_to = int(input())
+    check_acc_amt = check_amt(current_account)
+
+    if acc == transfer_to:
+        print("You can't transfer money to the same account!")
+    else:
+        if check_acc(transfer_to) and check_luhn(str(transfer_to)):
+            print('Enter how much money you want to transfer:')
+            transfer_amt = int(input())
+            if check_acc_amt < transfer_amt:
+                print('Not enough money!\n')
+                log_in_menu()
+
+            else:
+                cur.execute(f'SELECT balance FROM card WHERE number = "{acc}"')
+                current_acc_bal = cur.fetchone()
+                new_balance = current_acc_bal[0] - transfer_amt
+                cur.execute(f'UPDATE card SET balance = {new_balance} WHERE number = {acc}')
+                conn.commit()
+
+                cur.execute(f'SELECT balance FROM card WHERE number = "{transfer_to}"')
+                transfer_to_balance = cur.fetchone()
+                new_balance = transfer_to_balance[0] + transfer_amt
+                cur.execute(f'UPDATE card SET balance = {new_balance} WHERE number = {str(transfer_to)}')
+                conn.commit()
+                print('Success!\n')
+                log_in_menu()
+        elif not check_luhn(str(transfer_to)):
+            print('Probably you made a mistake in the card number. Please try again!\n')
+            do_transfer(current_account)
+        elif not check_acc(transfer_to):
+            print('Such a card does not exist.\n')
+            do_transfer(current_account)
+
+
+def close_account(acc):
+    cur.execute(f'DELETE FROM card WHERE number = {acc}')
+    conn.commit()
+    print('The account has been closed!')
+    main_menu()
+
+
+def log_in_menu():
+    print('1. Balance\n'
+          '2. Add income\n'
+          '3. Do transfer\n'
+          '4. Close account\n'
+          '5. Log out\n'
+          '0. Exit\n')
+
+    action = int(input())
+    print()
+
+    if action == 1:
+        balance = card_balance(current_account)
+        print(f'Balance: {balance}\n')
+        log_in_menu()
+    elif action == 5:
+        print('You have successfully logged out!\n')
+        main_menu()
+    elif action == 0:
+        exit()
+    elif action == 2:
+        add_income(current_account)
+        print('Income was added')
+        log_in_menu()
+    elif action == 3:
+        do_transfer(current_account)
+    elif action == 4:
+        close_account(current_account)
+    else:
+        print('error, try again.\n')
+        log_in_menu()
+
+
+def card_balance(card):
+    cur.execute(f'SELECT balance FROM card WHERE number = {card}')
+    balance = cur.fetchone()
+    return balance[0]
+
+
+def random_digits_gen(n):
+    range_start = 10**(n-1)
+    range_end = (10**n)-1
+    return randint(range_start, range_end)
+
+
+def store_nums(number, pin):
+    global card_numbers
+    card_numbers[number] = pin
+
+
+def check_luhn(card_to_validate):
+    y = 0
+    c = 0
+    card_number = list(card_to_validate)
+    finale_numbers = list()
+    if len(card_number) == 15:
+        for i in card_number:
+            c += 1
+            x = int(i)
+            if c % 2 != 0:
+                x = int(i) * 2
+                if x > 9:
+                    x = x - 9
+                finale_numbers.append(x)
+            else:
+                finale_numbers.append(x)
+
+        for i in finale_numbers:
+            y += int(i)
+
+        z = (-y % 10)
+        finale_numbers.append(z)
+        result = ''.join(str(card_to_validate) + str(z))
+        return result
+    elif len(card_number) == 16:
+        last_dig = card_number.pop()
+        for i in card_number:
+            c += 1
+            x = int(i)
+            if c % 2 != 0:
+                x = int(i) * 2
+                if x > 9:
+                    x = x - 9
+                finale_numbers.append(x)
+            else:
+                finale_numbers.append(x)
+
+            y = 0
+            for f in finale_numbers:
+                y += int(f)
+
+        if (y + int(last_dig)) % 2 == 0:
+            return True
+        else:
+            return False
+
+
+if __name__ == '__main__':
+    sql_connect()
+    main_menu()
